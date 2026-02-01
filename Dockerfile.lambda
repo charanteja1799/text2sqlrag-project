@@ -89,14 +89,26 @@ FROM public.ecr.aws/lambda/python:3.12
 # - fontconfig: Font configuration and rendering
 #
 RUN dnf install -y \
+    # --- PDF core ---
     poppler \
     poppler-utils \
     poppler-glib \
+    \
+    # --- Rendering stack (REQUIRED for Docling) ---
+    cairo \
+    pango \
+    freetype \
+    harfbuzz \
+    fontconfig \
+    \
+    # --- OpenGL / headless rendering ---
     mesa-libGL \
     mesa-libGLU \
     mesa-libgbm \
     libglvnd-glx \
     libglvnd-egl \
+    \
+    # --- X11 / XCB (fixes libxcb.so.1) ---
     libX11 \
     libXext \
     libXrender \
@@ -105,13 +117,16 @@ RUN dnf install -y \
     libXdamage \
     libXfixes \
     libXxf86vm \
+    \
+    # --- Image formats ---
     libpng \
-    libtiff \
     libjpeg-turbo \
+    libtiff \
     openjpeg2 \
+    \
+    # --- System ---
     file-libs \
     glib2 \
-    fontconfig \
     && dnf clean all \
     && rm -rf /var/cache/dnf
 
