@@ -35,7 +35,9 @@ jobs:
           echo "   • Lambda Function: ${{ env.LAMBDA_FUNCTION }}"
           echo "   • Platform: linux/amd64"
           echo ""
-          echo "⏱️  Estimated deployment time: 2-8 minutes (cached: ~2 min, first build: ~5-8 min)"
+          echo "⏱️  Estimated deployment time:"
+          echo "   • First deployment (new AWS account): ~30-35 minutes (builds base image)"
+          echo "   • Subsequent deployments: ~5-7 minutes (uses cached base image)"
           echo "=========================================="
           echo ""
 
@@ -78,13 +80,62 @@ jobs:
           echo "Registry: ${{ steps.login-ecr.outputs.registry }}"
           echo ""
 
-      - name: Pull base image
+      - name: Check and build base image if needed
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          BASE_IMAGE: lambda-python-deps:3.12
         run: |
-          echo "📥 Pulling Lambda base image..."
-          echo "   Image: ${{ steps.login-ecr.outputs.registry }}/lambda-python-deps:3.12"
-          docker pull ${{ steps.login-ecr.outputs.registry }}/lambda-python-deps:3.12
-          echo "✅ Base image pulled successfully"
+          echo "=========================================="
+          echo "🔍 Checking for Lambda Base Image"
+          echo "=========================================="
+          echo "Base image: $ECR_REGISTRY/$BASE_IMAGE"
           echo ""
+
+          # Try to pull the base image
+          if docker pull $ECR_REGISTRY/$BASE_IMAGE 2>/dev/null; then
+            echo "✅ Base image found in ECR - using cached version"
+            echo "   This is the fast path (deployment will take ~5-7 minutes)"
+            echo ""
+          else
+            echo "⚠️  Base image not found in ECR"
+            echo "   This is expected for first-time setup or new AWS accounts"
+            echo ""
+            echo "=========================================="
+            echo "🏗️  Building Lambda Base Image (One-Time)"
+            echo "=========================================="
+            echo "⏱️  This will take 25-30 minutes (one-time only)"
+            echo "   Future deployments will be 6-7x faster!"
+            echo ""
+            echo "📦 Building base image with system dependencies..."
+            echo "   - PDF processing: poppler, poppler-utils, poppler-glib"
+            echo "   - Rendering: cairo, pango, freetype, harfbuzz"
+            echo "   - OpenGL: mesa-libGL, mesa-libGLU, mesa-libgbm"
+            echo "   - X11: libX11, libXext, libXrender, libxcb"
+            echo "   - Image formats: libpng, libjpeg-turbo, libtiff"
+            echo "   - Build tools: gcc, gcc-c++"
+            echo ""
+
+            # Build the base image
+            docker build \
+              --platform linux/amd64 \
+              -f Dockerfile.lambda.base \
+              -t $ECR_REGISTRY/$BASE_IMAGE \
+              .
+
+            echo ""
+            echo "✅ Base image built successfully!"
+            echo ""
+            echo "📤 Pushing base image to ECR..."
+            docker push $ECR_REGISTRY/$BASE_IMAGE
+            echo ""
+            echo "=========================================="
+            echo "✅ Base Image Setup Complete!"
+            echo "=========================================="
+            echo "🎉 Base image is now cached in ECR"
+            echo "   All future deployments will use this cached image"
+            echo "   Expected deployment time: ~5-7 minutes (6-7x faster!)"
+            echo ""
+          fi
 
       - name: Build Docker image
         env:
