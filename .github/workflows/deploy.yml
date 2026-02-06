@@ -7,6 +7,8 @@ on:
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: rag-text-to-sql-server
+  BASE_IMAGE_REPOSITORY: lambda-python-deps
+  BASE_IMAGE_TAG: "3.12"
   LAMBDA_FUNCTION: rag-text-to-sql-server
 
 jobs:
@@ -83,16 +85,17 @@ jobs:
       - name: Check and build base image if needed
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          BASE_IMAGE: lambda-python-deps:3.12
         run: |
           echo "=========================================="
           echo "🔍 Checking for Lambda Base Image"
           echo "=========================================="
-          echo "Base image: $ECR_REGISTRY/$BASE_IMAGE"
+          echo "Repository: ${{ env.BASE_IMAGE_REPOSITORY }}"
+          echo "Tag: ${{ env.BASE_IMAGE_TAG }}"
+          echo "Full image: $ECR_REGISTRY/${{ env.BASE_IMAGE_REPOSITORY }}:${{ env.BASE_IMAGE_TAG }}"
           echo ""
 
           # Try to pull the base image
-          if docker pull $ECR_REGISTRY/$BASE_IMAGE 2>/dev/null; then
+          if docker pull $ECR_REGISTRY/${{ env.BASE_IMAGE_REPOSITORY }}:${{ env.BASE_IMAGE_TAG }} 2>/dev/null; then
             echo "✅ Base image found in ECR - using cached version"
             echo "   This is the fast path (deployment will take ~5-7 minutes)"
             echo ""
@@ -119,14 +122,14 @@ jobs:
             docker build \
               --platform linux/amd64 \
               -f Dockerfile.lambda.base \
-              -t $ECR_REGISTRY/$BASE_IMAGE \
+              -t $ECR_REGISTRY/${{ env.BASE_IMAGE_REPOSITORY }}:${{ env.BASE_IMAGE_TAG }} \
               .
 
             echo ""
             echo "✅ Base image built successfully!"
             echo ""
             echo "📤 Pushing base image to ECR..."
-            docker push $ECR_REGISTRY/$BASE_IMAGE
+            docker push $ECR_REGISTRY/${{ env.BASE_IMAGE_REPOSITORY }}:${{ env.BASE_IMAGE_TAG }}
             echo ""
             echo "=========================================="
             echo "✅ Base Image Setup Complete!"
