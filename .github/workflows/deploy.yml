@@ -246,29 +246,125 @@ jobs:
           echo "Region: ${{ env.AWS_REGION }}"
           echo ""
 
-          # Update Lambda function code with ARM64 architecture
-          # IMPORTANT: --architectures flag MUST be used with update-function-code
-          echo "📝 Updating Lambda function code..."
-          aws lambda update-function-code \
+          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+          # Check if the function exists and its package type
+          PACKAGE_TYPE=$(aws lambda get-function-configuration \
             --function-name ${{ env.LAMBDA_FUNCTION }} \
-            --image-uri $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
-            --architectures x86_64
-          echo "✅ Update command sent!"
+            --query 'PackageType' --output text 2>/dev/null || echo "NOT_FOUND")
+
+          echo "📋 Current package type: $PACKAGE_TYPE"
           echo ""
 
-          # Wait for update to complete
-          echo "⏳ Waiting for Lambda function to finish updating..."
-          echo "   This may take 30-60 seconds..."
-          aws lambda wait function-updated \
-            --function-name ${{ env.LAMBDA_FUNCTION }}
-          echo "✅ Lambda function updated successfully!"
-          echo ""
+          if [ "$PACKAGE_TYPE" = "Zip" ]; then
+            echo "=========================================="
+            echo "🔄 Converting Lambda from Zip to Image package type"
+            echo "=========================================="
+            echo "⚠️  Lambda package type cannot be changed in-place."
+            echo "   Will save config → delete → recreate as Image function."
+            echo ""
+
+            # Save existing function configuration
+            echo "📥 Saving existing function configuration..."
+            FUNC_CONFIG=$(aws lambda get-function-configuration \
+              --function-name ${{ env.LAMBDA_FUNCTION }})
+
+            ROLE_ARN=$(echo "$FUNC_CONFIG" | jq -r '.Role')
+            MEMORY=$(echo "$FUNC_CONFIG" | jq -r '.MemorySize')
+            TIMEOUT=$(echo "$FUNC_CONFIG" | jq -r '.Timeout')
+            ENV_VARS=$(echo "$FUNC_CONFIG" | jq -c '.Environment // empty')
+
+            echo "   Role: $ROLE_ARN"
+            echo "   Memory: ${MEMORY}MB"
+            echo "   Timeout: ${TIMEOUT}s"
+            echo "   Environment: $([ -n "$ENV_VARS" ] && echo 'preserved' || echo 'none')"
+            echo ""
+
+            # Delete the existing Zip function
+            echo "🗑️  Deleting existing Zip-based Lambda function..."
+            aws lambda delete-function --function-name ${{ env.LAMBDA_FUNCTION }}
+            echo "✅ Deleted successfully"
+            echo ""
+
+            # Wait briefly for deletion to propagate
+            sleep 5
+
+            # Recreate as Image-based function
+            echo "🏗️  Creating new Image-based Lambda function..."
+            CREATE_ARGS=(
+              --function-name "${{ env.LAMBDA_FUNCTION }}"
+              --package-type Image
+              --code "ImageUri=$IMAGE_URI"
+              --role "$ROLE_ARN"
+              --architectures x86_64
+              --memory-size "$MEMORY"
+              --timeout "$TIMEOUT"
+            )
+
+            # Preserve environment variables if they existed
+            if [ -n "$ENV_VARS" ] && [ "$ENV_VARS" != "null" ]; then
+              CREATE_ARGS+=(--environment "$ENV_VARS")
+            fi
+
+            aws lambda create-function "${CREATE_ARGS[@]}"
+            echo "✅ Lambda function created with Image package type!"
+            echo ""
+
+            # Wait for function to become active
+            echo "⏳ Waiting for function to become active..."
+            aws lambda wait function-active-v2 \
+              --function-name ${{ env.LAMBDA_FUNCTION }}
+            echo "✅ Function is active!"
+            echo ""
+
+          elif [ "$PACKAGE_TYPE" = "Image" ]; then
+            # Standard path: update existing Image-based function
+            echo "📝 Updating Lambda function code..."
+            aws lambda update-function-code \
+              --function-name ${{ env.LAMBDA_FUNCTION }} \
+              --image-uri $IMAGE_URI \
+              --architectures x86_64
+            echo "✅ Update command sent!"
+            echo ""
+
+            # Wait for update to complete
+            echo "⏳ Waiting for Lambda function to finish updating..."
+            echo "   This may take 30-60 seconds..."
+            aws lambda wait function-updated \
+              --function-name ${{ env.LAMBDA_FUNCTION }}
+            echo "✅ Lambda function updated successfully!"
+            echo ""
+
+          else
+            # Function doesn't exist - create it fresh
+            echo "📝 Function not found. Creating new Image-based Lambda..."
+            echo "⚠️  You need to set LAMBDA_EXECUTION_ROLE_ARN in GitHub secrets"
+            echo "   for first-time function creation."
+            echo ""
+
+            aws lambda create-function \
+              --function-name ${{ env.LAMBDA_FUNCTION }} \
+              --package-type Image \
+              --code "ImageUri=$IMAGE_URI" \
+              --role "${{ secrets.LAMBDA_EXECUTION_ROLE_ARN }}" \
+              --architectures x86_64 \
+              --memory-size 512 \
+              --timeout 60
+            echo "✅ Lambda function created!"
+            echo ""
+
+            echo "⏳ Waiting for function to become active..."
+            aws lambda wait function-active-v2 \
+              --function-name ${{ env.LAMBDA_FUNCTION }}
+            echo "✅ Function is active!"
+            echo ""
+          fi
 
           # Get function info
           echo "📊 Lambda Function Status:"
           aws lambda get-function \
             --function-name ${{ env.LAMBDA_FUNCTION }} \
-            --query '{State:Configuration.State,LastUpdateStatus:Configuration.LastUpdateStatus,Architecture:Configuration.Architectures[0],Memory:Configuration.MemorySize,Timeout:Configuration.Timeout}' \
+            --query '{State:Configuration.State,LastUpdateStatus:Configuration.LastUpdateStatus,PackageType:Configuration.PackageType,Architecture:Configuration.Architectures[0],Memory:Configuration.MemorySize,Timeout:Configuration.Timeout}' \
             --output table
           echo ""
 
